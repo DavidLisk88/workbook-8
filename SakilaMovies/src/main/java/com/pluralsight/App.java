@@ -1,50 +1,36 @@
 package com.pluralsight;
 
 import org.apache.commons.dbcp2.BasicDataSource;
-
 import java.sql.*;
-import java.util.HashSet;
 import java.util.Scanner;
-import java.util.Set;
 
 public class App {
 
     static Scanner userInput = new Scanner(System.in);
 
-    public static void main(String[] args) throws SQLException, ClassNotFoundException {
-
-        // Class.forName("com.mysql.cj.jdbc.Driver");
-
+    public static void main(String[] args) throws SQLException {
         try (BasicDataSource dataSource = new BasicDataSource()) {
-
             dataSource.setUrl("jdbc:mysql://localhost:3306/sakila?user=root&password=Northwest101$");
 
-
-            Connection connection = dataSource.getConnection();
-
-            homeScreen(connection);
-        } catch (SQLException e) {
-            e.printStackTrace();
+            try (Connection connection = dataSource.getConnection()) {
+                homeScreen(connection);
+            }
         }
-
     }
 
     public static void homeScreen(Connection connection) throws SQLException {
         while (true) {
-
-            // printBanner();
-            System.out.println("\nEnter actors last name: ");
-            System.out.println("1) Display all actors by last name");
-            System.out.println("2) Display all films by actor");
+            System.out.println("\n1) Search actors by name");
+            System.out.println("2) Display all films by actor ID");
             System.out.println("0) Exit");
             System.out.print("Select an option: ");
 
-            String line = userInput.nextLine();        // read the whole line
+            String line = userInput.nextLine();
             int choice;
             try {
                 choice = Integer.parseInt(line.trim());
             } catch (NumberFormatException e) {
-                System.out.println("Please enter a number.");
+                System.out.println("Please enter a valid number.");
                 continue;
             }
 
@@ -57,7 +43,7 @@ public class App {
                     break;
                 case 0:
                     System.out.println("Goodbye!");
-                    return;  // exit the menu loop
+                    return;
                 default:
                     System.out.println("Invalid choice. Please try again.");
             }
@@ -65,81 +51,89 @@ public class App {
     }
 
     public static void displayAllActors(Connection connection) throws SQLException {
-        String query = """
-                SELECT last_name,
-                actor_id
-                FROM actor;
-                
-                """;
-
-        try (
-                PreparedStatement statement = connection.prepareStatement(query);
-                ResultSet results = statement.executeQuery()
-        ) {
-            System.out.println("\nAll Actors By Last Name:\n");
-            while (results.next()) {
-                System.out.println("ID: " + results.getInt("actor_id"));
-                System.out.println("Actor: " + results.getString("last_name"));
-                System.out.println("----------------------------");
-            }
-
+        System.out.print("Enter actor name to search (first or last, or 0 to return): ");
+        String namePattern = userInput.nextLine().trim();
+        if ("0".equals(namePattern)) {
+            return;
         }
 
-
-    }
-
-
-    public static void displayAllFilmsByActor(Connection connection) throws SQLException {
-
-        System.out.println("Enter actor first name:  ");
-        String firstName = userInput.nextLine().trim().toUpperCase();
-        if ("0".equals(firstName)) return;
-
-        System.out.println("Enter actor last name: ");
-        String lastName = userInput.nextLine().trim().toUpperCase();
-        if ("0".equals(lastName)) return;
-
-
         String query = """
-                 SELECT\s
-                   f.title,
-                   a.first_name,
-                   a.last_name
-                 FROM actor AS a
-                 INNER JOIN film_actor AS fa
-                   ON a.actor_id = fa.actor_id
-                 INNER JOIN film AS f
-                   ON fa.film_id = f.film_id
-                 WHERE a.first_name = ?\s
-                   AND a.last_name  = ?
-                 ORDER BY f.title;
-                """;
+            SELECT actor_id, first_name, last_name
+            FROM actor
+            WHERE first_name LIKE ?
+               OR last_name  LIKE ?
+            ORDER BY last_name, first_name;
+            """;
 
+        try (PreparedStatement statement = connection.prepareStatement(query)) {
+            String pattern = "%" + namePattern + "%";
+            statement.setString(1, pattern);
+            statement.setString(2, pattern);
 
-        Set<String> validName = new HashSet<>();
-
-        try (PreparedStatement statement = connection.prepareStatement(query);) {
-            statement.setString(1, firstName);
-            statement.setString(2, lastName);
-
-
-            try (
-
-                    ResultSet results = statement.executeQuery()
-            ) {
-
-
-                System.out.println("\nAll Films By Actor:\n");
-
-                boolean foundName = false;
-                while (results.next()) {
-                    foundName = true;
-                    System.out.println("Name: " + results.getString("first_name") + " " + results.getString("last_name"));
-                    System.out.println("Film: " + results.getString("title"));
+            try (ResultSet rs = statement.executeQuery()) {
+                boolean found = false;
+                System.out.println("\nSearch Results:");
+                while (rs.next()) {
+                    found = true;
+                    int actorId = rs.getInt("actor_id");
+                    String firstName = rs.getString("first_name");
+                    String lastName = rs.getString("last_name");
+                    System.out.println("ID: " + actorId);
+                    System.out.println("Name: " + firstName + " " + lastName);
                     System.out.println("----------------------------");
                 }
-                if (!foundName) {
-                    System.out.println("No films available by that actor. Please try again.");
+                if (!found) {
+                    System.out.println("No actors found matching '" + namePattern + "'.");
+                }
+            }
+        }
+    }
+
+    public static void displayAllFilmsByActor(Connection connection) throws SQLException {
+        System.out.print("Enter an actor ID to list their films (or 0 to return): ");
+        String line = userInput.nextLine().trim();
+        if ("0".equals(line)) {
+            return;
+        }
+
+        int actorId;
+        try {
+            actorId = Integer.parseInt(line);
+        } catch (NumberFormatException e) {
+            System.out.println("Invalid ID. Returning to menu.");
+            return;
+        }
+
+        String query = """
+            SELECT f.film_id, f.title, f.description, f.release_year, f.length
+            FROM film_actor fa
+            JOIN film f ON fa.film_id = f.film_id
+            WHERE fa.actor_id = ?
+            ORDER BY f.title;
+            """;
+
+        try (PreparedStatement statement = connection.prepareStatement(query)) {
+            statement.setInt(1, actorId);
+
+            try (ResultSet rs = statement.executeQuery()) {
+                boolean found = false;
+                System.out.println("\nFilms for Actor ID " + actorId + ":");
+                while (rs.next()) {
+                    found = true;
+                    int filmId = rs.getInt("film_id");
+                    String title = rs.getString("title");
+                    String description = rs.getString("description");
+                    int releaseYear = rs.getInt("release_year");
+                    int length = rs.getInt("length");
+                    System.out.println("ID: " + filmId);
+                    System.out.println("Title: " + title);
+                    System.out.println("Description: " + description);
+                    System.out.println("Year: " + releaseYear);
+                    System.out.println("Length: " + length + " min");
+                    System.out.println("----------------------------");
+                }
+                if (!found) {
+                    System.out.println("No films found for actor ID " + actorId + ".");
                 }
             }
         }
